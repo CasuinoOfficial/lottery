@@ -24,6 +24,7 @@ module lottery::lottery {
     use lottery::big_queue::{Self, BigQueue};
     use std::vector;
     use sui::event::emit;
+    use std::option::{Self, Option};
 
     // --------------- Events ---------------
     struct TicketPurchased<phantom T> has copy, store, drop {
@@ -63,10 +64,9 @@ module lottery::lottery {
     const EWrongLottery: u64 = 4;
     const EMinimumJackpotNotHit: u64 = 5;
     const ELotteryNotSettled: u64 = 6;
-    const ENotWinner: u64 = 7;
-    const EWrongRound: u64 = 8;
-    const EJackpotHit: u64 = 9;
-    const ELotteryNotExists: u64 = 10;
+    const EWrongRound: u64 = 7;
+    const EJackpotHit: u64 = 8;
+    const ELotteryNotExists: u64 = 9;
 
     // --------------- Name Tag ---------------
     
@@ -579,7 +579,7 @@ module lottery::lottery {
         store: &mut LotteryStore,
         lottery_id: ID,
         ctx: &mut TxContext,
-    ): Coin<T> {
+    ): Option<Coin<T>> {
         // Get lottery from the store
         let lottery = borrow_mut_lottery<T>(store, lottery_id);
         assert!(ticket.lottery_id == object::id(lottery), EWrongLottery);
@@ -603,28 +603,27 @@ module lottery::lottery {
             let total_jackpot = balance::value(&lottery.lottery_prize_pool);
             // Split the jackpot multiple ways
             let prize_coin = coin::take(&mut lottery.lottery_prize_pool, total_jackpot / jackpot_winner_count, ctx);
-            prize_coin
-        } else {
-            // Normal case 
-            assert!(table::contains(&lottery.winning_tickets, ticket_id), ENotWinner);
+            option::some(prize_coin)
+        } else if (table::contains(&lottery.winning_tickets, ticket_id)) {
+            // Normal case of ticket
             let prize = table::borrow_mut(&mut lottery.winning_tickets, ticket_id);
             let prize_value = balance::value(prize);
             let prize_coin = coin::take(prize, prize_value, ctx);
-            prize_coin
+            option::some(prize_coin)
+        } else {
+            option::none()
         }
     }
 
-    /// Note that a ticket can be deleted before the game was completed.
-    /// This function is so that users can get back gas rebate.
-    public fun delete_ticket(ticket: Ticket) {
-        let Ticket { 
-            id, 
-            picks: _, 
-            lottery_id:  _, 
-            round: _, 
-            timestamp_issued: _
-        } = ticket;
-        object::delete(id);
+    public fun transfer_optional_coin<T>(
+        coin_opt: &mut Option<Coin<T>>,
+        ctx: &mut TxContext
+    ) {
+        let sender = tx_context::sender(ctx);
+        if (option::is_some(coin_opt)) {
+            let coin = option::extract(coin_opt);
+            transfer::public_transfer(coin, sender);
+        };
     }
 
     // --------------- House Accessors ---------------

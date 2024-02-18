@@ -1,14 +1,18 @@
+// Copyright (c) Electric Brain, LLC.
+// SPDX-License-Identifier: Apache-2.0
+
 #[test_only]
 module lottery::lottery_test {
     use lottery::lottery::{
         LotteryStoreAdminCap, LotteryStore, init_for_testing, settle_or_continue_for_testing,
         create_lottery, create_store, create_test_reward_struct, set_store_state, buy_ticket, 
         lottery_prize_pool, lottery_fees, allow_redemptions_for_round, redeem, set_next_round_and_drawing_time,
-        Ticket, ELotteryNotInProgress, ELotteryNotSettled};
+        Ticket, ELotteryNotInProgress, ELotteryNotSettled, transfer_optional_coin};
     use sui::transfer;
     use sui::clock::{Self, Clock};
     use sui::object::{ID};
     use sui::coin::{Self};
+    use std::option;
 
     #[test_only] use sui::test_scenario::{Scenario};
     #[test_only] use sui::coin::{mint_for_testing};
@@ -173,17 +177,23 @@ module lottery::lottery_test {
             let clock: Clock = ts::take_shared(scenario);
             let store: LotteryStore = ts::take_shared(scenario);
             
-            let coin = redeem<SUI>(
+            let option_coin = redeem<SUI>(
                 ticket,
                 &mut store,
                 lottery_id,
                 ts::ctx(scenario)
             );
 
+            let coin_value = option::borrow(&option_coin);
+            assert!(coin::value(coin_value) == 1, 0);
+            transfer_optional_coin(
+                &mut option_coin,
+                ts::ctx(scenario)
+            );
+            option::destroy_none(option_coin);
+
             ts::return_shared(clock);
             ts::return_shared(store);
-            assert!(coin::value(&coin) == 1, 0);
-            transfer::public_transfer(coin, ALICE);
         };
         
         ts::end(scenario_val);
@@ -258,17 +268,23 @@ module lottery::lottery_test {
             let store: LotteryStore = ts::take_shared(scenario);
             let clock: Clock = ts::take_shared(scenario);
 
-            let coin = redeem<SUI>(
+            let option_coin = redeem<SUI>(
                 ticket,
                 &mut store,
                 lottery_id,
                 ts::ctx(scenario)
             );
-            assert!(coin::value(&coin) == STARTING_PRIZE_POOL + HALF_TICKET_COST, 0);
+            let coin_value = option::borrow(&option_coin);
+            assert!(coin::value(coin_value) == STARTING_PRIZE_POOL + HALF_TICKET_COST, 0);
+            transfer_optional_coin(
+                &mut option_coin,
+                ts::ctx(scenario)
+            );
+            option::destroy_none(option_coin);
+
             let lottery_prize_pool = lottery_prize_pool<SUI>(&store, lottery_id);
             assert!(lottery_prize_pool == 0, 0);
             ts::return_shared(store);
-            transfer::public_transfer(coin, ALICE);
             ts::return_shared(clock);
         };
         ts::end(scenario_val);
@@ -374,14 +390,20 @@ module lottery::lottery_test {
             let clock: Clock = ts::take_shared(scenario);
             let store: LotteryStore = ts::take_shared(scenario);
             let lottery_prize_pool = lottery_prize_pool<SUI>(&store, lottery_id);
-            let coin = redeem<SUI>(
+            let option_coin = redeem<SUI>(
                 ticket,
                 &mut store,
                 lottery_id,
                 ts::ctx(scenario)
             );
-            assert!(coin::value(&coin) == (lottery_prize_pool)/ 3, 0);
-            transfer::public_transfer(coin, ALICE);
+            let coin_value = option::borrow(&option_coin);
+            assert!(coin::value(coin_value) == (lottery_prize_pool)/ 3, 0);
+            transfer_optional_coin(
+                &mut option_coin,
+                ts::ctx(scenario)
+            );
+            option::destroy_none(option_coin);
+
             ts::return_shared(clock);
             ts::return_shared(store);
         };
@@ -391,14 +413,20 @@ module lottery::lottery_test {
             let clock: Clock = ts::take_shared(scenario);
             let store: LotteryStore = ts::take_shared(scenario);
             let lottery_prize_pool = lottery_prize_pool<SUI>(&store, lottery_id);
-            let coin = redeem<SUI>(
+            let option_coin = redeem<SUI>(
                 ticket,
                 &mut store,
                 lottery_id,
                 ts::ctx(scenario)
             );
-            assert!(coin::value(&coin) == (lottery_prize_pool)/ 2, 0);
-            transfer::public_transfer(coin, BOB);
+            let coin_value = option::borrow(&option_coin);
+            assert!(coin::value(coin_value) == (lottery_prize_pool)/ 2, 0);
+            transfer_optional_coin(
+                &mut option_coin,
+                ts::ctx(scenario)
+            );
+            option::destroy_none(option_coin);
+
             ts::return_shared(clock);
             ts::return_shared(store);
         };
@@ -408,14 +436,20 @@ module lottery::lottery_test {
             let clock: Clock = ts::take_shared(scenario);
             let store: LotteryStore = ts::take_shared(scenario);
             let lottery_prize_pool = lottery_prize_pool<SUI>(&store, lottery_id);
-            let coin = redeem<SUI>(
+            let option_coin = redeem<SUI>(
                 ticket,
                 &mut store,
                 lottery_id,
                 ts::ctx(scenario)
             );
-            assert!(coin::value(&coin) == lottery_prize_pool, 0);
-            transfer::public_transfer(coin, CAT);
+            let coin_value = option::borrow(&option_coin);
+            assert!(coin::value(coin_value) == lottery_prize_pool, 0);
+            transfer_optional_coin(
+                &mut option_coin,
+                ts::ctx(scenario)
+            );
+            option::destroy_none(option_coin);
+
             let lottery_prize_pool = lottery_prize_pool<SUI>(&store, lottery_id);
             assert!(lottery_prize_pool == 0, 0);
             ts::return_shared(clock);
@@ -599,16 +633,20 @@ module lottery::lottery_test {
             let ticket: Ticket = ts::take_from_sender(scenario);
             let store: LotteryStore = ts::take_shared(scenario);
             let clock: Clock = ts::take_shared(scenario);
-            std::debug::print(&b"tes");
-
-            let coin = redeem<SUI>(
+            let option_coin = redeem<SUI>(
                 ticket,
                 &mut store,
                 lottery_id,
                 ts::ctx(scenario)
             );
-            assert!(coin::value(&coin) == 1, 0);
-            transfer::public_transfer(coin, ALICE);
+            let coin_value = option::borrow(&option_coin);
+            assert!(coin::value(coin_value) == 1, 0);
+            transfer_optional_coin(
+                &mut option_coin,
+                ts::ctx(scenario)
+            );
+            option::destroy_none(option_coin);
+
             ts::return_shared(clock);
             ts::return_shared(store);
         };
