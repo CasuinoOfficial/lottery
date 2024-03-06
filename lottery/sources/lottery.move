@@ -6,7 +6,7 @@
 /// from https://github.com/MystenLabs/sui/blob/682431233d0a5e067afe56173059aba798027890/sui_programmability/examples/games/sources/drand_based_lottery.move#L4
 
 /// This is a continuous lottery implementation, where one lottery starts and will be funded,
-/// and then continue to run until the numbers get hit. We will be 
+/// and then continue to run until the numbers get hit.
 module lottery::lottery {
     use lottery::drand_lib::{derive_randomness, verify_drand_signature, safe_selection};
     use sui::object::{Self, ID, UID};
@@ -38,6 +38,13 @@ module lottery::lottery {
         timestamp_issued: u64        
     }
 
+    struct TicketResult<phantom T> has copy, store, drop {
+        player: address,
+        reward_structure: RewardStructure,
+        amount_won: u64,
+        picks: Picks
+    }
+
     /// The result for each round of drawings, we will post up the results.
     struct RoundResult<phantom T> has copy, store, drop {
         round: u64,
@@ -55,6 +62,11 @@ module lottery::lottery {
     struct LotteryCreated<phantom T> has copy, store, drop {
         lottery_id: ID,
         initial_prize_amount: u64,
+    }
+
+    struct RedeemEvent<phantom T> has copy, drop {
+        player: address,
+        amount: u64
     }
 
     // --------------- Errors ---------------
@@ -84,9 +96,9 @@ module lottery::lottery {
     }
 
     /// Individual lottery hosted as a dof within the lottery store.
-    /// The user selects a ticket of 5 numbers from 1 - 35, any 
+    /// The user selects a ticket of 5 numbers from 0 - 34, any 
     /// combination of these numbers that hit are valid. The special 
-    /// ball will be a random number from 1 - 10. We will use the last ball 
+    /// ball will be a random number from 0 - 9. We will use the last ball 
     /// as the special ball similar to the golden ball of the power ball 
     /// lottery. We currently plan to run a drawing every single day 
     /// at 00:00 UTC time, and potentially live stream this drawing. 
@@ -432,8 +444,6 @@ module lottery::lottery {
         rand_seed = derive_randomness(rand_seed);
         let special_roll = (safe_selection((lottery.max_special_ball as u64), &rand_seed) as u8);
 
-
-
         Picks {
             numbers: results,
             special_number: special_roll
@@ -487,6 +497,7 @@ module lottery::lottery {
         lottery_id: ID,
         drand_sig: vector<u8>,
         game_round: u64,
+        page_size: Option<u64>,
         clock: &Clock,
     ) {
         // Get lottery from the store
@@ -499,8 +510,14 @@ module lottery::lottery {
 
         let result_rolls = select_numbers(lottery, drand_sig);
 
+        let end_target = 0;
+        if (option::is_some(&page_size)) {
+            let page = *option::borrow(&page_size);
+            end_target = big_queue::length(&lottery.tickets) - page;
+        };
+
         // Settle backwards so indices do not change
-        while (big_queue::length(&lottery.tickets) > 0) {
+        while (big_queue::length(&lottery.tickets) > end_target) {
             let receipt = big_queue::pop_front(&mut lottery.tickets);
             let (prize_amount, is_jackpot) = get_ticket_result(receipt.picks, &result_rolls, lottery);
 
@@ -515,14 +532,17 @@ module lottery::lottery {
             }
         };
 
-        *table::borrow_mut(&mut lottery.rounds_settled, game_round) = true;
+        // Only happens if there are no tickets left to process in this round
+        if (big_queue::length(&lottery.tickets) == 0) {
+            *table::borrow_mut(&mut lottery.rounds_settled, game_round) = true;
 
-        emit(RoundResult<T>{
-            round: game_round,
-            lottery_id: object::id(lottery),
-            results: result_rolls,
-            timestamp_drawn: clock::timestamp_ms(clock)
-        })
+            emit(RoundResult<T>{
+                round: game_round,
+                lottery_id: object::id(lottery),
+                results: result_rolls,
+                timestamp_drawn: clock::timestamp_ms(clock)
+            });
+        };
     }
 
     /// Allow redemptions for a given game round set of tickets
@@ -584,7 +604,7 @@ module lottery::lottery {
         let lottery = borrow_mut_lottery<T>(store, lottery_id);
         assert!(ticket.lottery_id == object::id(lottery), EWrongLottery);
         assert!(redemptions_allowed_for_round(lottery, ticket.round), ELotteryNotSettled);
-
+        let player = tx_context::sender(ctx);
         let ticket_id = object::id(&ticket);
         let Ticket { 
             id, 
@@ -603,14 +623,29 @@ module lottery::lottery {
             let total_jackpot = balance::value(&lottery.lottery_prize_pool);
             // Split the jackpot multiple ways
             let prize_coin = coin::take(&mut lottery.lottery_prize_pool, total_jackpot / jackpot_winner_count, ctx);
+            let amount_won = coin::value(&prize_coin);
+            event::emit(RedeemEvent<T> {
+                player,
+                amount: amount_won
+            });
             option::some(prize_coin)
         } else if (table::contains(&lottery.winning_tickets, ticket_id)) {
             // Normal case of ticket
-            let prize = table::borrow_mut(&mut lottery.winning_tickets, ticket_id);
-            let prize_value = balance::value(prize);
-            let prize_coin = coin::take(prize, prize_value, ctx);
+            let prize = table::remove(&mut lottery.winning_tickets, ticket_id);
+            let prize_value = balance::value(&prize);
+            let prize_coin = coin::take(&mut prize, prize_value, ctx);
+            let amount_won = coin::value(&prize_coin);
+            balance::destroy_zero(prize);
+            event::emit(RedeemEvent<T> {
+                player,
+                amount: amount_won
+            });
             option::some(prize_coin)
         } else {
+            event::emit(RedeemEvent<T> {
+                player,
+                amount: 0
+            });
             option::none()
         }
     }
@@ -653,6 +688,12 @@ module lottery::lottery {
         dof::borrow_mut<ID, Lottery<T>>(&mut store.id, lottery_id)
     }
 
+    public fun get_lottery_queue_size<T>(store: &LotteryStore, lottery_id: ID): u64 {
+        assert!(lottery_exists<T>(store, lottery_id), ELotteryNotExists);
+        let lottery = dof::borrow<ID, Lottery<T>>(&store.id, lottery_id);
+        big_queue::length(&lottery.tickets)
+    }
+
     public fun redemptions_allowed_for_round<T>(lottery: &Lottery<T>, round: u64): bool {
         *table::borrow(&lottery.redemptions_allowed, round)
     }
@@ -685,9 +726,10 @@ module lottery::lottery {
         lottery_id: ID,
         drand_sig: vector<u8>,
         game_round: u64,
+        page_size: Option<u64>,
         clock: &Clock,
     ) {
-         // Get lottery from the store
+        // Get lottery from the store
         let lottery = borrow_mut_lottery<T>(store, lottery_id);
         assert!(game_round == lottery.current_round, EWrongRound);
         // Assert the game is not already settled
@@ -697,8 +739,14 @@ module lottery::lottery {
 
         let result_rolls = select_numbers(lottery, drand_sig);
 
+        let end_target = 0;
+        if (option::is_some(&page_size)) {
+            let page = *option::borrow(&page_size);
+            end_target = big_queue::length(&lottery.tickets) - page;
+        };
+
         // Settle backwards so indices do not change
-        while (big_queue::length(&lottery.tickets) > 0) {
+        while (big_queue::length(&lottery.tickets) > end_target) {
             let receipt = big_queue::pop_front(&mut lottery.tickets);
             let (prize_amount, is_jackpot) = get_ticket_result(receipt.picks, &result_rolls, lottery);
 
@@ -713,14 +761,17 @@ module lottery::lottery {
             }
         };
 
-        *table::borrow_mut(&mut lottery.rounds_settled, game_round) = true;
+        // Only happens if there are no tickets left to process in this round
+        if (big_queue::length(&lottery.tickets) == 0) {
+            *table::borrow_mut(&mut lottery.rounds_settled, game_round) = true;
 
-        emit(RoundResult<T>{
-            round: game_round,
-            lottery_id: object::id(lottery),
-            results: result_rolls,
-            timestamp_drawn: clock::timestamp_ms(clock)
-        })
+            emit(RoundResult<T>{
+                round: game_round,
+                lottery_id: object::id(lottery),
+                results: result_rolls,
+                timestamp_drawn: clock::timestamp_ms(clock)
+            });
+        };
     }
 
     #[test_only]

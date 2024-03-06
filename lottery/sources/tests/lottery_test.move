@@ -7,7 +7,7 @@ module lottery::lottery_test {
         LotteryStoreAdminCap, LotteryStore, init_for_testing, settle_or_continue_for_testing,
         create_lottery, create_store, create_test_reward_struct, set_store_state, buy_ticket, 
         lottery_prize_pool, lottery_fees, allow_redemptions_for_round, redeem, set_next_round_and_drawing_time,
-        Ticket, ELotteryNotInProgress, ELotteryNotSettled, transfer_optional_coin};
+        Ticket, ELotteryNotInProgress, ELotteryNotSettled, transfer_optional_coin, get_lottery_queue_size};
     use sui::transfer;
     use sui::clock::{Self, Clock};
     use sui::object::{ID};
@@ -33,9 +33,6 @@ module lottery::lottery_test {
     const TICKET_COST: u64 = 10;
     const LOTTERY_END_TIME: u64 = 10;
     const HALF_TICKET_COST: u64 = 5;
-
-    // TODO: Add test case to show you cant update lottery until it is settled
-    // TODO: Add test case to show you can't buy ticket after lottery is settled
 
     #[test_only]
     public fun setup_lottery(
@@ -156,6 +153,7 @@ module lottery::lottery_test {
                 lottery_id,
                 b"testdrand",
                 1,
+                option::none(),
                 &clock
             );
             // Since submitting a ticket that wins the 1 tier
@@ -246,6 +244,7 @@ module lottery::lottery_test {
                 lottery_id,
                 b"testdrand",
                 1,
+                option::none(),
                 &clock
             );
             // Since submitting a ticket that wins the 1 tier
@@ -372,6 +371,7 @@ module lottery::lottery_test {
                 lottery_id,
                 b"testdrand",
                 1,
+                option::none(),
                 &clock
             );
             allow_redemptions_for_round<SUI>(
@@ -495,6 +495,7 @@ module lottery::lottery_test {
                 lottery_id,
                 b"testdrand",
                 1,
+                option::none(),
                 &clock
             );
             allow_redemptions_for_round<SUI>(
@@ -540,6 +541,113 @@ module lottery::lottery_test {
         ts::end(scenario_val);
     }
 
+    // Test round claim and move on to next round
+    #[test]
+    fun test_move_to_next_round_with_pagination() {
+        let scenario_val = ts::begin(OWNER);
+        let scenario = &mut scenario_val;
+        let lottery_id = setup_lottery(scenario);
+
+        ts::next_tx(scenario, ALICE);
+        let clock: Clock = ts::take_shared(scenario);
+        let store: LotteryStore = ts::take_shared(scenario);
+        {
+            let ticket_coin = mint_for_testing<SUI>(TICKET_COST, ts::ctx(scenario));
+            let number_choice: vector<u8> = vector[0, 1];
+            let special_number = 4;
+
+            let ticket = buy_ticket<SUI>(
+                &mut store,
+                lottery_id,
+                ticket_coin,
+                number_choice,
+                special_number,
+                &clock,
+                ts::ctx(scenario)
+            );
+            let ticket_2 = buy_ticket<SUI>(
+                &mut store,
+                lottery_id,
+                mint_for_testing<SUI>(TICKET_COST, ts::ctx(scenario)),
+                number_choice,
+                special_number,
+                &clock,
+                ts::ctx(scenario)
+            );
+
+            // Transfer ticket to Alice
+            transfer::public_transfer(ticket, ALICE);
+            transfer::public_transfer(ticket_2, ALICE);
+        };
+        ts::next_tx(scenario, OWNER);
+        {
+            let lottery_cap: LotteryStoreAdminCap = ts::take_from_sender(scenario);
+            clock::increment_for_testing(&mut clock, 15);
+            settle_or_continue_for_testing<SUI>(
+                &lottery_cap,
+                &mut store,
+                lottery_id,
+                b"testdrand",
+                1,
+                option::some(1),
+                &clock
+            );
+            
+            // assert that queue has some size left
+            assert!(get_lottery_queue_size<SUI>(&store, lottery_id) == 1, 0);
+            
+            settle_or_continue_for_testing<SUI>(
+                &lottery_cap,
+                &mut store,
+                lottery_id,
+                b"testdrand",
+                1,
+                option::some(1),
+                &clock
+            );
+
+            allow_redemptions_for_round<SUI>(
+                &lottery_cap, 
+                &mut store,
+                lottery_id,
+                1
+            );
+            ts::return_to_sender(scenario, lottery_cap);
+        };
+        ts::next_tx(scenario, OWNER);
+        {
+            let lottery_cap: LotteryStoreAdminCap = ts::take_from_sender(scenario);
+            // Start round 2 of the lottery
+            set_next_round_and_drawing_time<SUI>(
+                &mut store,
+                lottery_id,
+                &lottery_cap,
+                15,
+                2
+            );
+            ts::return_to_sender(scenario, lottery_cap);
+        };
+        ts::next_tx(scenario, ALICE);
+        {
+            let ticket_coin = mint_for_testing<SUI>(TICKET_COST, ts::ctx(scenario));
+            let number_choice: vector<u8> = vector[0, 1];
+            let special_number = 4;
+            let ticket = buy_ticket<SUI>(
+                &mut store,
+                lottery_id,
+                ticket_coin,
+                number_choice,
+                special_number,
+                &clock,
+                ts::ctx(scenario)
+            );
+            // Transfer ticket to Alice
+            transfer::public_transfer(ticket, ALICE);
+        };
+        ts::return_shared(clock);
+        ts::return_shared(store);
+        ts::end(scenario_val);
+    }
 
     // Test try to buy ticket after expiration
     #[test]
@@ -621,6 +729,7 @@ module lottery::lottery_test {
                 lottery_id,
                 b"testdrand",
                 1,
+                option::none(),
                 &clock
             );
             std::debug::print(&b"tes");
