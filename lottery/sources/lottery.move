@@ -194,6 +194,21 @@ module lottery::lottery {
         let to_withdraw = balance::split(&mut lottery.lottery_fees, quantity);
         coin::from_balance(to_withdraw, ctx)
     }
+
+    public fun withdraw_all<T>(
+        _store_cap: &LotteryStoreAdminCap,
+        store: &mut LotteryStore,
+        lottery_id: ID,
+        ctx: &mut TxContext
+    ): Coin<T> {
+        let prize_value = lottery_prize_pool<T>(store, lottery_id);
+        let fees_value = lottery_fees<T>(store, lottery_id);
+        let lottery = borrow_mut_lottery<T>(store, lottery_id);
+        let to_withdraw = balance::split(&mut lottery.lottery_fees, fees_value);
+        let prize_to_withdraw = balance::split(&mut lottery.lottery_prize_pool, prize_value);
+        balance::join<T>(&mut to_withdraw, prize_to_withdraw);
+        coin::from_balance(to_withdraw, ctx)
+    }
     
     // --------------- Constructor ---------------
 
